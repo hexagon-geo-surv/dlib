@@ -43,21 +43,16 @@ set(pybind11_INCLUDE_DIRS
 
 # CMP0190 prohibits calling FindPython with both Interpreter and Development components
 # when cross-compiling, unless the CMAKE_CROSSCOMPILING_EMULATOR variable is defined.
-# Default PYBIND11_USE_CROSSCOMPILING to ON in that case, but never override a value the
-# project set explicitly (e.g. Emscripten/Pyodide defines an emulator yet still wants it ON).
-# PYBIND11_USE_CROSSCOMPILING is undefined for find_package() consumers, but our own
-# CMakeLists.txt always defines it via option(); _PYBIND11_USE_CROSSCOMPILING_DEFAULTED tells
-# us whether that came from the project or from the option() default.
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.1"
-   AND NOT DEFINED CMAKE_CROSSCOMPILING_EMULATOR
-   AND (NOT DEFINED PYBIND11_USE_CROSSCOMPILING OR _PYBIND11_USE_CROSSCOMPILING_DEFAULTED))
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.1")
   cmake_policy(GET CMP0190 _pybind11_cmp0190)
   if(_pybind11_cmp0190 STREQUAL "NEW")
     set(PYBIND11_USE_CROSSCOMPILING "ON")
   endif()
 endif()
 
-if(CMAKE_CROSSCOMPILING AND PYBIND11_USE_CROSSCOMPILING)
+if(CMAKE_CROSSCOMPILING
+   AND PYBIND11_USE_CROSSCOMPILING
+   AND NOT DEFINED CMAKE_CROSSCOMPILING_EMULATOR)
   set(_PYBIND11_CROSSCOMPILING
       ON
       CACHE INTERNAL "")
@@ -119,8 +114,7 @@ add_library(pybind11::python_link_helper IMPORTED INTERFACE ${optional_global})
 set_property(
   TARGET pybind11::python_link_helper
   APPEND
-  PROPERTY INTERFACE_LINK_OPTIONS
-           "$<$<PLATFORM_ID:Darwin,iOS,tvOS,watchOS,visionOS>:LINKER:-undefined,dynamic_lookup>")
+  PROPERTY INTERFACE_LINK_OPTIONS "$<$<PLATFORM_ID:Darwin>:LINKER:-undefined,dynamic_lookup>")
 
 # ------------------------ Windows extras -------------------------
 
@@ -358,11 +352,7 @@ function(_pybind11_generate_lto target prefer_thin_lto)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT APPLE)
       # Clang Gold plugin does not support -Os; append -O3 to MinSizeRel builds to override it
       set(linker_append ";$<$<CONFIG:MinSizeRel>:-O3>")
-    elseif(
-      CMAKE_CXX_COMPILER_ID MATCHES "GNU"
-      AND NOT MINGW
-      AND NOT APPLE)
-      # GCC on macOS has no linker plugin, which -fno-fat-lto-objects requires
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND NOT MINGW)
       set(cxx_append ";-fno-fat-lto-objects")
     endif()
 

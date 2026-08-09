@@ -193,8 +193,6 @@ public:
                 ::new (value->storage) T(fn());
                 value->finalize = finalize_fn;
                 value->is_initialized = true;
-                // Publish the cached pointer before setting the validity flag, so that any reader
-                // which observes the flag as true is guaranteed to also observe this pointer.
                 last_storage_ptr_ = reinterpret_cast<T *>(value->storage);
                 is_initialized_by_at_least_one_interpreter_ = true;
             });
@@ -206,17 +204,11 @@ public:
 
     // This must only be called after `call_once_and_store_result()` was called.
     T &get_stored() {
-        T *result = nullptr;
-        // Check the validity flag *before* loading the cached pointer: the writer publishes the
-        // pointer before setting the flag, so observing the flag as true guarantees the load below
-        // sees the published pointer.
-        if (is_last_storage_valid()) {
-            result = last_storage_ptr_;
-        } else {
+        T *result = last_storage_ptr_;
+        if (!is_last_storage_valid()) {
             gil_scoped_acquire gil_acq;
             auto *value = get_or_create_storage_in_state_dict();
-            result = reinterpret_cast<T *>(value->storage);
-            last_storage_ptr_ = result;
+            result = last_storage_ptr_ = reinterpret_cast<T *>(value->storage);
         }
         assert(result != nullptr);
         return *result;
@@ -268,12 +260,10 @@ private:
 
     // Fast local cache to avoid repeated lookups when there are no multiple interpreters.
     // This is only valid if there is a single interpreter. Otherwise, it is not used.
-    // It is atomic because under free-threading (`Py_GIL_DISABLED`) the GIL provides no mutual
-    // exclusion, so this pointer may be read and written concurrently by multiple threads.
     // WARNING: We cannot use thread local cache similar to `internals_pp_manager::internals_p_tls`
     //          because the thread local storage cannot be explicitly invalidated when interpreters
     //          are destroyed (unlike `internals_pp_manager` which has explicit hooks for that).
-    std::atomic<T *> last_storage_ptr_{nullptr};
+    T *last_storage_ptr_ = nullptr;
     // This flag is true if the value has been initialized by any interpreter (may not be the
     // current one).
     detail::atomic_bool is_initialized_by_at_least_one_interpreter_{false};

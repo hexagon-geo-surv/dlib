@@ -243,28 +243,29 @@ public:
             return false;
         }
 
+#if !defined(PYPY_VERSION)
+        auto index_check = [](PyObject *o) { return PyIndex_Check(o); };
+#else
+        // In PyPy 7.3.3, `PyIndex_Check` is implemented by calling `__index__`,
+        // while CPython only considers the existence of `nb_index`/`__index__`.
+        auto index_check = [](PyObject *o) { return hasattr(o, "__index__"); };
+#endif
+
         if (std::is_floating_point<T>::value) {
-            if (convert || PyFloat_Check(src.ptr()) || PYBIND11_LONG_CHECK(src.ptr())) {
+            if (convert || PyFloat_Check(src.ptr())) {
                 py_value = (py_type) PyFloat_AsDouble(src.ptr());
             } else {
                 return false;
             }
         } else if (PyFloat_Check(src.ptr())
-                   || !(convert || PYBIND11_LONG_CHECK(src.ptr())
-                        || PYBIND11_INDEX_CHECK(src.ptr()))) {
-            // Explicitly reject float → int conversion even in convert mode.
-            // This prevents silent truncation (e.g., 1.9 → 1).
-            // Only int → float conversion is allowed (widening, no precision loss).
-            // Also reject if none of the conversion conditions are met.
+                   || (!convert && !PYBIND11_LONG_CHECK(src.ptr()) && !index_check(src.ptr()))) {
             return false;
         } else {
             handle src_or_index = src;
             // PyPy: 7.3.7's 3.8 does not implement PyLong_*'s __index__ calls.
 #if defined(PYPY_VERSION)
             object index;
-            // If not a PyLong, we need to call PyNumber_Index explicitly on PyPy.
-            // When convert is false, we only reach here if PYBIND11_INDEX_CHECK passed above.
-            if (!PYBIND11_LONG_CHECK(src.ptr())) {
+            if (!PYBIND11_LONG_CHECK(src.ptr())) { // So: index_check(src.ptr())
                 index = reinterpret_steal<object>(PyNumber_Index(src.ptr()));
                 if (!index) {
                     PyErr_Clear();
@@ -284,10 +285,8 @@ public:
             }
         }
 
-        bool py_err = (PyErr_Occurred() != nullptr);
-        if (py_err) {
-            assert(py_value == static_cast<py_type>(-1));
-        }
+        // Python API reported an error
+        bool py_err = py_value == (py_type) -1 && PyErr_Occurred();
 
         // Check to see if the conversion is valid (integers should match exactly)
         // Signed/unsigned checks happen elsewhere
@@ -507,11 +506,12 @@ struct string_caster {
     static constexpr size_t UTF_N = 8 * sizeof(CharT);
 
     bool load(handle src, bool) {
+        handle load_src = src;
         if (!src) {
             return false;
         }
-        if (!PyUnicode_Check(src.ptr())) {
-            return load_raw(src);
+        if (!PyUnicode_Check(load_src.ptr())) {
+            return load_raw(load_src);
         }
 
         // For UTF-8 we avoid the need for a temporary `bytes` object by using
@@ -519,7 +519,7 @@ struct string_caster {
         if (UTF_N == 8) {
             Py_ssize_t size = -1;
             const auto *buffer
-                = reinterpret_cast<const CharT *>(PyUnicode_AsUTF8AndSize(src.ptr(), &size));
+                = reinterpret_cast<const CharT *>(PyUnicode_AsUTF8AndSize(load_src.ptr(), &size));
             if (!buffer) {
                 PyErr_Clear();
                 return false;
@@ -529,7 +529,7 @@ struct string_caster {
         }
 
         auto utfNbytes
-            = reinterpret_steal<object>(PyUnicode_AsEncodedString(src.ptr(),
+            = reinterpret_steal<object>(PyUnicode_AsEncodedString(load_src.ptr(),
                                                                   UTF_N == 8    ? "utf-8"
                                                                   : UTF_N == 16 ? "utf-16"
                                                                                 : "utf-32",

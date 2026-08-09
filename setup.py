@@ -175,7 +175,8 @@ class CMakeBuild(build_ext):
         cmake_args_dict = {
             'CMAKE_LIBRARY_OUTPUT_DIRECTORY': extdir,
             'DLIB_USE_FFMPEG': 'OFF',
-            'PYTHON_EXECUTABLE': sys.executable,
+            'PYBIND11_FINDPYTHON': 'ON',
+            'Python_EXECUTABLE': sys.executable,
         }
         for key, value in os.environ.items():
             if key.startswith("DLIB_"):
